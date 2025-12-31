@@ -258,7 +258,7 @@ export function computeGuidance(state, dt) {
         debugInfo.burnStartTime = burnStartTimeBeforeApo;
         
         // ================================================================
-        // FEEDBACK-BASED GUIDANCE LOGIC
+        // STRATEGY SELECTION: Direct Ascent vs Traditional Apoapsis-First
         // ================================================================
         
         const apoError = orbit.apoapsis - GUIDANCE_CONFIG.targetAltitude;
@@ -266,8 +266,42 @@ export function computeGuidance(state, dt) {
         
         const tolerance = 10000; // 10km
         
-        // PHASE 1: Apoapsis below target — raise it
-        if (apoError < -tolerance) {
+        // Determine if we should use direct ascent strategy
+        const useDirectAscent = GUIDANCE_CONFIG.targetAltitude < 250000 || 
+                                (circularizationBurnTime > 0 && 
+                                 circularizationBurnTime > 60 && 
+                                 apoError < tolerance);
+        
+        debugInfo.useDirectAscent = useDirectAscent;
+        
+        // ================================================================
+        // DIRECT ASCENT STRATEGY (for low orbits / long circularization burns)
+        // ================================================================
+        
+        if (useDirectAscent && periError < -tolerance) {
+            // PHASE 1: Periapsis below target — burn prograde to raise it
+            guidanceState.isRetrograde = false;
+            
+            const periDeficit = -periError;
+            
+            // Burn prograde to raise periapsis
+            correction = 0; // Follow prograde
+            
+            if (periDeficit < 50000) {
+                commandedThrottle = Math.max(0.1, periDeficit / 50000);
+                debugInfo.reason = 'Direct ascent — raising periapsis (throttled, ' + (periDeficit/1000).toFixed(0) + 'km to go)';
+            } else {
+                commandedThrottle = 1.0;
+                debugInfo.reason = 'Direct ascent — raising periapsis to target';
+            }
+        }
+        
+        // ================================================================
+        // TRADITIONAL APOAPSIS-FIRST STRATEGY (for high orbits)
+        // ================================================================
+        
+        else if (!useDirectAscent && apoError < -tolerance) {
+            // PHASE 1: Apoapsis below target — raise it
             guidanceState.isRetrograde = false;
             
             const deficit = -apoError;
@@ -282,8 +316,8 @@ export function computeGuidance(state, dt) {
                 debugInfo.reason = 'Raising apoapsis — full throttle';
             }
         }
-        // PHASE 2: Apoapsis at or above target, periapsis below — circularize
-        else if (periError < -tolerance) {
+        // PHASE 2 (Traditional): Apoapsis at or above target, periapsis below — circularize
+        else if (!useDirectAscent && periError < -tolerance) {
             guidanceState.isRetrograde = false;
             
             const periDeficit = -periError;
@@ -301,24 +335,19 @@ export function computeGuidance(state, dt) {
                         : 'Starting circularization (T-' + timeToApoapsis.toFixed(0) + 's to apo)';
                 }
             }
-            else if (isAscending) {
+            else {
+                // Coast to burn start time (works for both ascending and descending)
                 commandedThrottle = 0;
                 correction = 0;
-                debugInfo.reason = 'Coasting to burn start (T-' + timeToApoapsis.toFixed(0) + 's, burn at T-' + burnStartTimeBeforeApo.toFixed(0) + 's)';
-            }
-            else {
-                correction = 0;
-                
-                if (periDeficit < 50000) {
-                    commandedThrottle = Math.max(0.1, periDeficit / 50000);
-                    debugInfo.reason = 'Past apoapsis — circularizing (throttled)';
+                if (isAscending) {
+                    debugInfo.reason = 'Coasting to burn start (T-' + timeToApoapsis.toFixed(0) + 's, burn at T-' + burnStartTimeBeforeApo.toFixed(0) + 's)';
                 } else {
-                    commandedThrottle = 1.0;
-                    debugInfo.reason = 'Past apoapsis — circularizing';
+                    debugInfo.reason = 'Coasting to apoapsis (T-' + timeToApoapsis.toFixed(0) + 's, burn at T-' + burnStartTimeBeforeApo.toFixed(0) + 's)';
                 }
             }
         }
-        // PHASE 3: Apoapsis too high, periapsis at target — retrograde at periapsis
+        // PHASE 3: Periapsis at/above target, apoapsis too high — retrograde at periapsis
+        // (Used by both direct ascent and traditional strategies)
         else if (periError >= -tolerance && apoError > tolerance) {
             const altitudeToPeriapsis = altitude - orbit.periapsis;
             let timeToPeriapsis = 0;
@@ -391,6 +420,10 @@ export function computeGuidance(state, dt) {
             commandedThrottle = 0;
             correction = 0;
             debugInfo.reason = 'Orbit achieved — coasting';
+            
+            // Reset burn flags so they can trigger again if target changes
+            guidanceState.circularizationBurnStarted = false;
+            guidanceState.retrogradeBurnStarted = false;
         }
         
         debugInfo.apoError = apoError;

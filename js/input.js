@@ -71,6 +71,7 @@ export function initInput() {
     // Launch button
     document.getElementById('launch-btn').addEventListener('click', () => {
         if (!state.running && state.time === 0) {
+            console.log("console running")
             state.running = true;
             state.engineOn = true;
             addEvent("LIFTOFF!");
@@ -181,4 +182,6 @@ export function initInput() {
         }
     });
 }
+
+
 

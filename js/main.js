@@ -71,36 +71,8 @@ function update(dt) {
                 thrustDir = prograde;
         }
     } else {
-        // Closed-loop guidance system
-        const guidance = computeGuidance(state, dt);
-        thrustDir = guidance.thrustDir;
-        state.guidancePhase = guidance.phase;
-        state.guidancePitch = guidance.pitch;
-        state.guidanceThrottle = guidance.throttle;
-        
-        // Detect and log burn start events
-        if (guidance.phase === 'vacuum-guidance' && guidance.debug.reason) {
-            const reason = guidance.debug.reason;
-            if ((reason.includes('Starting circularization') || reason.includes('At apoapsis — circularizing')) && 
-                !guidanceState.circularizationBurnStarted && 
-                state.engineOn && 
-                guidance.throttle > 0) {
-                guidanceState.circularizationBurnStarted = true;
-                const deltaV = guidance.debug.circDeltaV || 0;
-                const burnTime = guidance.debug.circBurnTime || 0;
-                addEvent(`Circularization burn start (Δv: ${(deltaV/1000).toFixed(1)} km/s, ${burnTime.toFixed(1)}s)`);
-            }
-            
-            if (reason.includes('Starting retrograde burn') && 
-                !guidanceState.retrogradeBurnStarted && 
-                state.engineOn && 
-                guidance.throttle > 0) {
-                guidanceState.retrogradeBurnStarted = true;
-                const deltaV = guidance.debug.retroDeltaV || 0;
-                const burnTime = guidance.debug.retroBurnTime || 0;
-                addEvent(`Retrograde burn start (Δv: ${(deltaV/1000).toFixed(1)} km/s, ${burnTime.toFixed(1)}s)`);
-            }
-        }
+        // Closed-loop guidance system (will be called per sub-step for accuracy)
+        thrustDir = null; // Will be computed in sub-stepping loop
     }
     
     // Enable engine for burn modes
@@ -109,18 +81,6 @@ function update(dt) {
         state.propellantRemaining[state.currentStage] > 0) {
         state.engineOn = true;
     }
-    
-    const throttle = state.guidanceThrottle !== undefined ? state.guidanceThrottle : 1.0;
-    const thrust = getCurrentThrust(altitude, throttle);
-    const thrustAccel = thrust / mass;
-    const tax = thrustAccel * thrustDir.x;
-    const tay = thrustAccel * thrustDir.y;
-    
-    const { airspeed, airVx, airVy } = getAirspeed();
-    const drag = getDrag(altitude, airspeed);
-    const dragAccel = airspeed > 0 ? drag / mass : 0;
-    const dax = airspeed > 0 ? -dragAccel * airVx / airspeed : 0;
-    const day = airspeed > 0 ? -dragAccel * airVy / airspeed : 0;
     
     // Adaptive sub-stepping
     const inOrbit = altitude > 150000 && !state.engineOn;
@@ -135,14 +95,75 @@ function update(dt) {
         const altitudeStep = rStep - EARTH_RADIUS;
         const velocityStep = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
         
+        // Compute guidance for each sub-step if not in burn mode
+        let thrustDirStep = thrustDir;
+        let throttleStep = 1.0;
+        
+        if (!thrustDir) {
+            // Guidance mode - update every sub-step for accuracy
+            const guidance = computeGuidance(state, actualStepDt);
+            thrustDirStep = guidance.thrustDir;
+            throttleStep = guidance.throttle;
+            
+            // Update state with latest guidance (will be overwritten each sub-step, last one persists)
+            state.guidancePhase = guidance.phase;
+            state.guidancePitch = guidance.pitch;
+            state.guidanceThrottle = guidance.throttle;
+            state.guidanceDebug = guidance.debug;
+            state.guidanceIsRetrograde = guidanceState.isRetrograde;
+            
+            // Detect and log burn start events (only on first sub-step to avoid spam)
+            if (step === 0 && guidance.phase === 'vacuum-guidance' && guidance.debug.reason) {
+                const reason = guidance.debug.reason;
+                const useDirectAscent = guidance.debug.useDirectAscent;
+                
+                // Direct ascent strategy: Prograde burn to raise periapsis (check this FIRST)
+                if (useDirectAscent && 
+                    (reason.includes('Direct ascent') && reason.includes('raising periapsis')) && 
+                    !guidanceState.circularizationBurnStarted && 
+                    state.engineOn && 
+                    guidance.throttle > 0) {
+                    guidanceState.circularizationBurnStarted = true;  // Reuse flag to prevent re-triggering
+                    addEvent(`Direct ascent burn - raising periapsis to target`);
+                }
+                // Traditional strategy: Circularization burn at apoapsis (only if NOT direct ascent)
+                // Only announce if more than 25 minutes have passed (avoids false positives during ascent)
+                else if (!useDirectAscent && 
+                    state.time >= 1500 && 
+                    (reason.includes('Starting circularization') || reason.includes('circularizing')) && 
+                    !guidanceState.circularizationBurnStarted && 
+                    state.engineOn && 
+                    guidance.throttle > 0) {
+                    guidanceState.circularizationBurnStarted = true;
+                    const deltaV = guidance.debug.circDeltaV || 0;
+                    const burnTime = guidance.debug.circBurnTime || 0;
+                    addEvent(`Circularization burn start (Δv: ${(deltaV/1000).toFixed(1)} km/s, ${burnTime.toFixed(1)}s)`);
+                }
+                
+                // Retrograde burn at periapsis (both strategies)
+                if (reason.includes('Starting retrograde burn') && 
+                    !guidanceState.retrogradeBurnStarted && 
+                    state.engineOn && 
+                    guidance.throttle > 0) {
+                    guidanceState.retrogradeBurnStarted = true;
+                    const deltaV = guidance.debug.retroDeltaV || 0;
+                    const burnTime = guidance.debug.retroBurnTime || 0;
+                    addEvent(`Retrograde burn start (Δv: ${(deltaV/1000).toFixed(1)} km/s, ${burnTime.toFixed(1)}s)`);
+                }
+            }
+        } else {
+            // Manual burn mode - use fixed thrust direction from above
+            throttleStep = 1.0;
+        }
+        
         const gravityStep = getGravity(rStep);
         const gxStep = -gravityStep * state.x / rStep;
         const gyStep = -gravityStep * state.y / rStep;
         
-        const thrustStep = getCurrentThrust(altitudeStep, throttle);
+        const thrustStep = getCurrentThrust(altitudeStep, throttleStep);
         const thrustAccelStep = thrustStep / mass;
-        const taxStep = thrustAccelStep * thrustDir.x;
-        const tayStep = thrustAccelStep * thrustDir.y;
+        const taxStep = thrustAccelStep * thrustDirStep.x;
+        const tayStep = thrustAccelStep * thrustDirStep.y;
         
         const atmVxStep = EARTH_ROTATION * state.y;
         const atmVyStep = -EARTH_ROTATION * state.x;
@@ -162,36 +183,38 @@ function update(dt) {
         state.vy += ayStep * actualStepDt;
         state.x += state.vx * actualStepDt;
         state.y += state.vy * actualStepDt;
+        
+        // Propellant consumption per sub-step (using actual throttle for this step)
+        if (state.engineOn && state.currentStage < ROCKET_CONFIG.stages.length) {
+            state.propellantRemaining[state.currentStage] -= getMassFlowRate(altitudeStep, throttleStep) * actualStepDt;
+        }
     }
     
-    // Propellant consumption
-    if (state.engineOn && state.currentStage < ROCKET_CONFIG.stages.length) {
-        state.propellantRemaining[state.currentStage] -= getMassFlowRate(altitude, throttle) * dt;
-        
-        if (state.propellantRemaining[state.currentStage] <= 0) {
-            state.propellantRemaining[state.currentStage] = 0;
-            if (state.currentStage === 0) {
-                addEvent("MECO");
-                state.currentStage = 1;
-                addEvent("Stage separation");
-                addEvent("SES-1");
-            } else {
-                addEvent("SECO");
-                state.engineOn = false;
-                if (state.burnMode) {
-                    const burnNames = {
-                        'prograde': 'PROGRADE',
-                        'retrograde': 'RETROGRADE',
-                        'normal': 'NORMAL',
-                        'anti-normal': 'ANTI-NORMAL',
-                        'radial': 'RADIAL',
-                        'anti-radial': 'ANTI-RADIAL'
-                    };
-                    const duration = state.burnStartTime ? (state.time - state.burnStartTime).toFixed(1) : '0.0';
-                    addEvent(`${burnNames[state.burnMode]} burn ended - out of propellant (${duration}s)`);
-                    state.burnMode = null;
-                    state.burnStartTime = null;
-                }
+    // Check for stage depletion after all sub-steps
+    if (state.currentStage < ROCKET_CONFIG.stages.length && 
+        state.propellantRemaining[state.currentStage] <= 0) {
+        state.propellantRemaining[state.currentStage] = 0;
+        if (state.currentStage === 0) {
+            addEvent("MECO");
+            state.currentStage = 1;
+            addEvent("Stage separation");
+            addEvent("SES-1");
+        } else {
+            addEvent("SECO");
+            state.engineOn = false;
+            if (state.burnMode) {
+                const burnNames = {
+                    'prograde': 'PROGRADE',
+                    'retrograde': 'RETROGRADE',
+                    'normal': 'NORMAL',
+                    'anti-normal': 'ANTI-NORMAL',
+                    'radial': 'RADIAL',
+                    'anti-radial': 'ANTI-RADIAL'
+                };
+                const duration = state.burnStartTime ? (state.time - state.burnStartTime).toFixed(1) : '0.0';
+                addEvent(`${burnNames[state.burnMode]} burn ended - out of propellant (${duration}s)`);
+                state.burnMode = null;
+                state.burnStartTime = null;
             }
         }
     }

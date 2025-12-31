@@ -57,6 +57,19 @@ export function updateTelemetry() {
     document.getElementById('apoapsis').textContent = state.apoapsis === Infinity ? 'ESCAPE' : (state.apoapsis / 1000).toFixed(1) + ' km';
     document.getElementById('periapsis').textContent = (state.periapsis / 1000).toFixed(1) + ' km';
     
+    // Show guidance strategy and burn type if available
+    const guidanceInfo = document.getElementById('guidance-info');
+    if (guidanceInfo) {
+        if (state.guidanceDebug && state.guidancePhase === 'vacuum-guidance' && state.engineOn) {
+            const strategy = state.guidanceDebug.useDirectAscent ? 'Direct Ascent' : 'Traditional';
+            const burnType = state.guidanceIsRetrograde ? 'RETROGRADE' : 'PROGRADE';
+            guidanceInfo.textContent = `Strategy: ${strategy} | Burn: ${burnType}`;
+            guidanceInfo.style.display = 'block';
+        } else {
+            guidanceInfo.style.display = 'none';
+        }
+    }
+    
     // Show/hide burn controls when in orbit and pitch program is complete
     const pitchProgramComplete = state.time > 600 || (!state.engineOn && altitude > 150000);
     const inOrbit = altitude > 150000 && state.currentStage < ROCKET_CONFIG.stages.length && pitchProgramComplete;
