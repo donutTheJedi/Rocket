@@ -239,18 +239,43 @@ export function render() {
     const localEast = { x: localUp.y, y: -localUp.x };
     ctx.translate(state.x + localUp.x * rocketLen * 0.5, state.y + localUp.y * rocketLen * 0.5);
     
-    // Calculate thrust direction vector
-    let thrustDir;
-    const pitchProgramComplete = state.time > 600 || (!state.engineOn && getAltitude() > 150000);
-    if (state.burnMode && pitchProgramComplete && getAltitude() > 150000) {
+    // Calculate rocket orientation
+    // In orbital mode when not burning, point along velocity (prograde)
+    // When burning, point along thrust direction
+    // Otherwise, use guidance or pitch
+    let rocketDir;
+    const currentAltitude = getAltitude();
+    const pitchProgramComplete = state.gameMode === 'orbital' || state.time > 600 || (!state.engineOn && currentAltitude > 150000);
+    
+    if (state.burnMode && pitchProgramComplete && currentAltitude > 150000) {
+        // Burning: point along thrust direction
         const velocity = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
-        thrustDir = velocity > 0 ? { x: state.vx / velocity, y: state.vy / velocity } : { x: localUp.x, y: localUp.y };
+        rocketDir = velocity > 0 ? { x: state.vx / velocity, y: state.vy / velocity } : { x: localEast.x, y: localEast.y };
+    } else if (state.gameMode === 'orbital') {
+        // Orbital mode, not burning: point along velocity (prograde)
+        const velocity = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
+        rocketDir = velocity > 0 ? { x: state.vx / velocity, y: state.vy / velocity } : { x: localEast.x, y: localEast.y };
     } else {
-        const guidance = computeGuidance(state, 0.016);
-        thrustDir = guidance.thrustDir;
+        // Use pitch to determine direction
+        const pitch = state.guidancePitch !== undefined ? state.guidancePitch : 90.0;
+        // In manual mode, use manual pitch
+        if (state.gameMode === 'manual' && state.manualPitch !== null) {
+            const pitchRad = state.manualPitch * Math.PI / 180;
+            rocketDir = {
+                x: Math.cos(pitchRad) * localEast.x + Math.sin(pitchRad) * localUp.x,
+                y: Math.cos(pitchRad) * localEast.y + Math.sin(pitchRad) * localUp.y
+            };
+        } else {
+            // Use guidance pitch
+            const pitchRad = pitch * Math.PI / 180;
+            rocketDir = {
+                x: Math.cos(pitchRad) * localEast.x + Math.sin(pitchRad) * localUp.x,
+                y: Math.cos(pitchRad) * localEast.y + Math.sin(pitchRad) * localUp.y
+            };
+        }
     }
     
-    const rocketAngle = Math.atan2(thrustDir.y, thrustDir.x) - Math.PI / 2;
+    const rocketAngle = Math.atan2(rocketDir.y, rocketDir.x) - Math.PI / 2;
     ctx.rotate(rocketAngle);
     
     // Make rocket visible even when zoomed out

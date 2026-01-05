@@ -1,5 +1,5 @@
-import { EARTH_RADIUS, EARTH_ROTATION, KARMAN_LINE, ROCKET_CONFIG } from './constants.js';
-import { state, initState, getAltitude, getTotalMass } from './state.js';
+import { EARTH_RADIUS, EARTH_ROTATION, KARMAN_LINE, ROCKET_CONFIG, GUIDANCE_CONFIG } from './constants.js';
+import { state, initState, getAltitude, getTotalMass, resetCurrentMission, spawnInOrbit } from './state.js';
 import { getGravity, getCurrentThrust, getMassFlowRate, getAtmosphericDensity, getAirspeed, getDrag } from './physics.js';
 import { calculateOrbitalElements } from './orbital.js';
 import { computeGuidance, guidanceState, resetGuidance } from './guidance.js';
@@ -11,6 +11,11 @@ import { initInput } from './input.js';
 // Update physics simulation
 function update(dt) {
     if (!state.running) return;
+    
+    // Update manual pitch if in manual mode (use original dt before time warp for consistent turning speed)
+    if (window.updateManualPitch) {
+        window.updateManualPitch(dt);
+    }
     
     dt *= state.timeWarp;
     const maxDt = 1.0;
@@ -40,7 +45,8 @@ function update(dt) {
     
     // Calculate orbital directions if in orbit
     let thrustDir;
-    const pitchProgramComplete = state.time > 600 || (!state.engineOn && altitude > 150000);
+    // In orbital mode, always allow burns. Otherwise, check pitch program completion.
+    const pitchProgramComplete = state.gameMode === 'orbital' || state.time > 600 || (!state.engineOn && altitude > 150000);
     if (state.burnMode && pitchProgramComplete && altitude > 150000) {
         const velocity = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
         const prograde = velocity > 0 ? { x: state.vx / velocity, y: state.vy / velocity } : { x: 0, y: 0 };
@@ -76,6 +82,7 @@ function update(dt) {
     }
     
     // Enable engine for burn modes
+    // In orbital mode, always allow burns if conditions are met
     if (state.burnMode && pitchProgramComplete && !state.engineOn && altitude > 150000 && 
         state.currentStage < ROCKET_CONFIG.stages.length && 
         state.propellantRemaining[state.currentStage] > 0) {
@@ -95,60 +102,119 @@ function update(dt) {
         const altitudeStep = rStep - EARTH_RADIUS;
         const velocityStep = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
         
+        // Recalculate local reference frame for each sub-step (position changes)
+        const localUpStep = { x: state.x / rStep, y: state.y / rStep };
+        const localEastStep = { x: localUpStep.y, y: -localUpStep.x };
+        
         // Compute guidance for each sub-step if not in burn mode
         let thrustDirStep = thrustDir;
         let throttleStep = 1.0;
         
+        // If in burn mode, recalculate thrust direction for each sub-step (velocity changes)
+        if (thrustDir && state.burnMode) {
+            const velocity = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
+            const prograde = velocity > 0 ? { x: state.vx / velocity, y: state.vy / velocity } : { x: 0, y: 0 };
+            const radial = localUpStep;
+            const h = state.x * state.vy - state.y * state.vx;
+            const normal = h > 0 ? { x: -localUpStep.y, y: localUpStep.x } : { x: localUpStep.y, y: -localUpStep.x };
+            
+            switch (state.burnMode) {
+                case 'prograde':
+                    thrustDirStep = prograde;
+                    break;
+                case 'retrograde':
+                    thrustDirStep = { x: -prograde.x, y: -prograde.y };
+                    break;
+                case 'normal':
+                    thrustDirStep = normal;
+                    break;
+                case 'anti-normal':
+                    thrustDirStep = { x: -normal.x, y: -normal.y };
+                    break;
+                case 'radial':
+                    thrustDirStep = radial;
+                    break;
+                case 'anti-radial':
+                    thrustDirStep = { x: -radial.x, y: -radial.y };
+                    break;
+                default:
+                    thrustDirStep = prograde;
+            }
+        }
+        
         if (!thrustDir) {
-            // Guidance mode - update every sub-step for accuracy
-            const guidance = computeGuidance(state, actualStepDt);
-            thrustDirStep = guidance.thrustDir;
-            throttleStep = guidance.throttle;
-            
-            // Update state with latest guidance (will be overwritten each sub-step, last one persists)
-            state.guidancePhase = guidance.phase;
-            state.guidancePitch = guidance.pitch;
-            state.guidanceThrottle = guidance.throttle;
-            state.guidanceDebug = guidance.debug;
-            state.guidanceIsRetrograde = guidanceState.isRetrograde;
-            
-            // Detect and log burn start events (only on first sub-step to avoid spam)
-            if (step === 0 && guidance.phase === 'vacuum-guidance' && guidance.debug.reason) {
-                const reason = guidance.debug.reason;
-                const useDirectAscent = guidance.debug.useDirectAscent;
+            // Skip guidance in orbital mode (user uses burn controls)
+            if (state.gameMode === 'orbital') {
+                // No thrust in orbital mode unless using burn controls
+                thrustDirStep = { x: 0, y: 0 };
+                throttleStep = 0;
+            } else {
+                // Guidance mode - update every sub-step for accuracy
+                const guidance = computeGuidance(state, actualStepDt);
                 
-                // Direct ascent strategy: Prograde burn to raise periapsis (check this FIRST)
-                if (useDirectAscent && 
-                    (reason.includes('Direct ascent') && reason.includes('raising periapsis')) && 
-                    !guidanceState.circularizationBurnStarted && 
-                    state.engineOn && 
-                    guidance.throttle > 0) {
-                    guidanceState.circularizationBurnStarted = true;  // Reuse flag to prevent re-triggering
-                    addEvent(`Direct ascent burn - raising periapsis to target`);
-                }
-                // Traditional strategy: Circularization burn at apoapsis (only if NOT direct ascent)
-                // Only announce if more than 25 minutes have passed (avoids false positives during ascent)
-                else if (!useDirectAscent && 
-                    state.time >= 1500 && 
-                    (reason.includes('Starting circularization') || reason.includes('circularizing')) && 
-                    !guidanceState.circularizationBurnStarted && 
-                    state.engineOn && 
-                    guidance.throttle > 0) {
-                    guidanceState.circularizationBurnStarted = true;
-                    const deltaV = guidance.debug.circDeltaV || 0;
-                    const burnTime = guidance.debug.circBurnTime || 0;
-                    addEvent(`Circularization burn start (Δv: ${(deltaV/1000).toFixed(1)} km/s, ${burnTime.toFixed(1)}s)`);
+                // In manual mode, use manual pitch for thrust direction but store guidance recommendation
+                if (state.gameMode === 'manual' && state.manualPitch !== null) {
+                    // Store guidance recommendation
+                    state.guidanceRecommendation = guidance.pitch;
+                    
+                    // Use manual pitch for thrust direction (with current local frame)
+                    const pitchRad = state.manualPitch * Math.PI / 180;
+                    thrustDirStep = {
+                        x: Math.cos(pitchRad) * localEastStep.x + Math.sin(pitchRad) * localUpStep.x,
+                        y: Math.cos(pitchRad) * localEastStep.y + Math.sin(pitchRad) * localUpStep.y
+                    };
+                    throttleStep = guidance.throttle; // Still use guidance throttle
+                } else {
+                    // Normal guidance mode
+                    thrustDirStep = guidance.thrustDir;
+                    throttleStep = guidance.throttle;
                 }
                 
-                // Retrograde burn at periapsis (both strategies)
-                if (reason.includes('Starting retrograde burn') && 
-                    !guidanceState.retrogradeBurnStarted && 
-                    state.engineOn && 
-                    guidance.throttle > 0) {
-                    guidanceState.retrogradeBurnStarted = true;
-                    const deltaV = guidance.debug.retroDeltaV || 0;
-                    const burnTime = guidance.debug.retroBurnTime || 0;
-                    addEvent(`Retrograde burn start (Δv: ${(deltaV/1000).toFixed(1)} km/s, ${burnTime.toFixed(1)}s)`);
+                // Update state with latest guidance (will be overwritten each sub-step, last one persists)
+                state.guidancePhase = guidance.phase;
+                state.guidancePitch = guidance.pitch;
+                state.guidanceThrottle = guidance.throttle;
+                state.guidanceDebug = guidance.debug;
+                state.guidanceIsRetrograde = guidanceState.isRetrograde;
+                
+                // Detect and log burn start events (only on first sub-step to avoid spam)
+                if (step === 0 && guidance.phase === 'vacuum-guidance' && guidance.debug && guidance.debug.reason) {
+                    const reason = guidance.debug.reason;
+                    const useDirectAscent = guidance.debug.useDirectAscent;
+                    
+                    // Direct ascent strategy: Prograde burn to raise periapsis (check this FIRST)
+                    if (useDirectAscent && 
+                        (reason.includes('Direct ascent') && reason.includes('raising periapsis')) && 
+                        !guidanceState.circularizationBurnStarted && 
+                        state.engineOn && 
+                        guidance.throttle > 0) {
+                        guidanceState.circularizationBurnStarted = true;  // Reuse flag to prevent re-triggering
+                        addEvent(`Direct ascent burn - raising periapsis to target`);
+                    }
+                    // Traditional strategy: Circularization burn at apoapsis (only if NOT direct ascent)
+                    // Only announce if more than 25 minutes have passed (avoids false positives during ascent)
+                    else if (!useDirectAscent && 
+                        state.time >= 1500 && 
+                        (reason.includes('Starting circularization') || reason.includes('circularizing')) && 
+                        !guidanceState.circularizationBurnStarted && 
+                        state.engineOn && 
+                        guidance.throttle > 0) {
+                        guidanceState.circularizationBurnStarted = true;
+                        const deltaV = guidance.debug.circDeltaV || 0;
+                        const burnTime = guidance.debug.circBurnTime || 0;
+                        addEvent(`Circularization burn start (Δv: ${(deltaV/1000).toFixed(1)} km/s, ${burnTime.toFixed(1)}s)`);
+                    }
+                    
+                    // Retrograde burn at periapsis (both strategies)
+                    if (reason.includes('Starting retrograde burn') && 
+                        !guidanceState.retrogradeBurnStarted && 
+                        state.engineOn && 
+                        guidance.throttle > 0) {
+                        guidanceState.retrogradeBurnStarted = true;
+                        const deltaV = guidance.debug.retroDeltaV || 0;
+                        const burnTime = guidance.debug.retroBurnTime || 0;
+                        addEvent(`Retrograde burn start (Δv: ${(deltaV/1000).toFixed(1)} km/s, ${burnTime.toFixed(1)}s)`);
+                    }
                 }
             }
         } else {
@@ -284,6 +350,164 @@ function loop(time) {
     requestAnimationFrame(loop);
 }
 
+// Menu functions
+function showMenu() {
+    const menuPanel = document.getElementById('menu-panel');
+    const menuOverlay = document.getElementById('menu-overlay');
+    if (menuPanel && menuOverlay) {
+        menuPanel.style.display = 'block';
+        menuOverlay.style.display = 'block';
+        setTimeout(() => {
+            menuPanel.classList.add('show');
+        }, 10);
+        const wasRunning = state.running;
+        state.running = false;
+        updateCurrentModeDisplay();
+        updateUIForMode();
+        if (wasRunning) {
+            const pauseBtn = document.getElementById('pause-btn');
+            if (pauseBtn) {
+                pauseBtn.textContent = 'PAUSE';
+            }
+        }
+    }
+}
+
+function hideMenu() {
+    const menuPanel = document.getElementById('menu-panel');
+    const menuOverlay = document.getElementById('menu-overlay');
+    if (menuPanel && menuOverlay) {
+        menuPanel.classList.remove('show');
+        setTimeout(() => {
+            menuPanel.style.display = 'none';
+            menuOverlay.style.display = 'none';
+        }, 300);
+    }
+}
+
+function updateCurrentModeDisplay() {
+    const modeDisplay = document.getElementById('current-mode-display');
+    if (modeDisplay) {
+        if (state.gameMode === 'manual') {
+            modeDisplay.textContent = 'Current Mode: Manual Control';
+        } else if (state.gameMode === 'guided') {
+            modeDisplay.textContent = `Current Mode: Guided Launch (${(state.targetAltitude / 1000).toFixed(0)}km target)`;
+        } else if (state.gameMode === 'orbital') {
+            modeDisplay.textContent = `Current Mode: Orbital (${(state.orbitalSpawnAltitude / 1000).toFixed(0)}km)`;
+        } else {
+            modeDisplay.textContent = 'No mission selected';
+        }
+    }
+}
+
+function startMission(mode, options = {}) {
+    if (mode === 'manual') {
+        state.gameMode = 'manual';
+        state.manualPitch = 90;
+        initState();
+        resetGuidance();
+        hideMenu();
+    } else if (mode === 'guided') {
+        const targetAlt = options.targetAltitude || 500000;
+        state.gameMode = 'guided';
+        state.targetAltitude = targetAlt;
+        GUIDANCE_CONFIG.targetAltitude = targetAlt;
+        initState();
+        resetGuidance();
+        hideMenu();
+    } else if (mode === 'orbital') {
+        const altitude = options.altitude || 500000;
+        state.gameMode = 'orbital';
+        state.orbitalSpawnAltitude = altitude;
+        spawnInOrbit(altitude);
+        resetGuidance();
+        hideMenu();
+    }
+    updateUIForMode();
+}
+
+function updateUIForMode() {
+    const launchBtn = document.getElementById('launch-btn');
+    const manualControls = document.getElementById('manual-pitch-controls');
+    const pitchProgram = document.getElementById('pitch-program');
+    
+    if (state.gameMode === 'manual') {
+        if (manualControls) manualControls.style.display = 'block';
+        if (pitchProgram) pitchProgram.style.display = 'none';
+    } else {
+        if (manualControls) manualControls.style.display = 'none';
+        if (pitchProgram && state.gameMode !== 'orbital') {
+            pitchProgram.style.display = 'block';
+        } else if (pitchProgram) {
+            pitchProgram.style.display = 'none';
+        }
+    }
+    
+    // Show launch button only for manual and guided modes
+    if (launchBtn) {
+        if (state.gameMode === 'orbital') {
+            launchBtn.style.display = 'none';
+        } else if (state.gameMode !== null) {
+            launchBtn.style.display = 'inline-block';
+        }
+    }
+}
+
+// Export for use in input.js
+window.updateUIForMode = updateUIForMode;
+
+// Initialize menu event handlers
+function initMenu() {
+    const menuBtn = document.getElementById('menu-btn');
+    const menuCloseBtn = document.getElementById('menu-close-btn');
+    const menuOverlay = document.getElementById('menu-overlay');
+    const startManualBtn = document.getElementById('start-manual-btn');
+    const startGuidedBtn = document.getElementById('start-guided-btn');
+    const startOrbitalBtn = document.getElementById('start-orbital-btn');
+    const presetBtns = document.querySelectorAll('.preset-btn');
+    
+    if (menuBtn) {
+        menuBtn.addEventListener('click', showMenu);
+    }
+    
+    if (menuCloseBtn) {
+        menuCloseBtn.addEventListener('click', hideMenu);
+    }
+    
+    if (menuOverlay) {
+        menuOverlay.addEventListener('click', hideMenu);
+    }
+    
+    if (startManualBtn) {
+        startManualBtn.addEventListener('click', () => {
+            startMission('manual');
+        });
+    }
+    
+    if (startGuidedBtn) {
+        startGuidedBtn.addEventListener('click', () => {
+            const input = document.getElementById('target-altitude-input');
+            const targetAlt = input ? parseFloat(input.value) * 1000 : 500000;
+            startMission('guided', { targetAltitude: targetAlt });
+        });
+    }
+    
+    if (startOrbitalBtn) {
+        startOrbitalBtn.addEventListener('click', () => {
+            const activePreset = document.querySelector('.preset-btn.active');
+            const altitude = activePreset ? parseFloat(activePreset.dataset.altitude) * 1000 : 500000;
+            startMission('orbital', { altitude: altitude });
+        });
+    }
+    
+    presetBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            presetBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        });
+    });
+}
+
 // Initialize application
 function init() {
     const canvas = document.getElementById('canvas');
@@ -292,6 +516,8 @@ function init() {
     initState();
     resetGuidance();
     initInput();
+    initMenu();
+    showMenu(); // Show menu on startup
     updateTelemetry();
     requestAnimationFrame(loop);
 }

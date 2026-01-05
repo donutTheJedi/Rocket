@@ -1,5 +1,5 @@
-import { ROCKET_CONFIG } from './constants.js';
-import { state, initState, getAltitude } from './state.js';
+import { ROCKET_CONFIG, GUIDANCE_CONFIG } from './constants.js';
+import { state, initState, getAltitude, resetCurrentMission } from './state.js';
 import { resetGuidance } from './guidance.js';
 import { addEvent } from './events.js';
 import { updateTelemetry } from './telemetry.js';
@@ -41,8 +41,10 @@ function setupBurnButton(buttonId, burnMode) {
     
     btn.addEventListener('mousedown', (e) => {
         e.preventDefault();
-        const pitchProgramComplete = state.time > 600 || (!state.engineOn && getAltitude() > 150000);
-        if (pitchProgramComplete && getAltitude() > 150000) {
+        const altitude = getAltitude();
+        // In orbital mode, always allow burns. Otherwise, check pitch program completion.
+        const pitchProgramComplete = state.gameMode === 'orbital' || state.time > 600 || (!state.engineOn && altitude > 150000);
+        if (pitchProgramComplete && altitude > 150000) {
             if (state.burnMode) {
                 stopBurn();
             }
@@ -72,7 +74,7 @@ export function initInput() {
     
     // Launch button
     document.getElementById('launch-btn').addEventListener('click', () => {
-        if (!state.running && state.time === 0) {
+        if (!state.running && state.time === 0 && state.gameMode !== null && state.gameMode !== 'orbital') {
             console.log("console running")
             state.running = true;
             state.engineOn = true;
@@ -98,12 +100,21 @@ export function initInput() {
     
     // Reset button
     document.getElementById('reset-btn').addEventListener('click', () => {
-        initState();
+        resetCurrentMission();
         resetGuidance();
         document.getElementById('launch-btn').disabled = false;
-        document.getElementById('launch-btn').style.display = 'inline-block';
+        if (state.gameMode !== 'orbital') {
+            document.getElementById('launch-btn').style.display = 'inline-block';
+        } else {
+            document.getElementById('launch-btn').style.display = 'none';
+        }
         document.getElementById('pause-btn').style.display = 'none';
         document.getElementById('pause-btn').textContent = 'PAUSE';
+        
+        // Update UI for current mode
+        if (window.updateUIForMode) {
+            window.updateUIForMode();
+        }
         updateTelemetry();
     });
     
@@ -183,6 +194,78 @@ export function initInput() {
             addEvent(`Refueled: +${refuelAmount} kg propellant`);
         }
     });
+    
+    // Manual pitch controls (W/S keys)
+    let pitchUpHeld = false;
+    let pitchDownHeld = false;
+    
+    document.addEventListener('keydown', (e) => {
+        if (state.gameMode === 'manual' && state.running) {
+            if (e.key === 'w' || e.key === 'W') {
+                pitchUpHeld = true;
+                if (state.manualPitch === null) {
+                    state.manualPitch = state.guidancePitch || 90;
+                }
+            }
+            if (e.key === 's' || e.key === 'S') {
+                pitchDownHeld = true;
+                if (state.manualPitch === null) {
+                    state.manualPitch = state.guidancePitch || 90;
+                }
+            }
+        }
+    });
+    
+    document.addEventListener('keyup', (e) => {
+        if (e.key === 'w' || e.key === 'W') pitchUpHeld = false;
+        if (e.key === 's' || e.key === 'S') pitchDownHeld = false;
+    });
+    
+    // Manual pitch button controls
+    const pitchUpBtn = document.getElementById('pitch-up-btn');
+    const pitchDownBtn = document.getElementById('pitch-down-btn');
+    
+    if (pitchUpBtn) {
+        pitchUpBtn.addEventListener('mousedown', () => {
+            if (state.gameMode === 'manual') {
+                pitchUpHeld = true;
+                if (state.manualPitch === null) {
+                    state.manualPitch = state.guidancePitch || 90;
+                }
+            }
+        });
+        pitchUpBtn.addEventListener('mouseup', () => pitchUpHeld = false);
+        pitchUpBtn.addEventListener('mouseleave', () => pitchUpHeld = false);
+    }
+    
+    if (pitchDownBtn) {
+        pitchDownBtn.addEventListener('mousedown', () => {
+            if (state.gameMode === 'manual') {
+                pitchDownHeld = true;
+                if (state.manualPitch === null) {
+                    state.manualPitch = state.guidancePitch || 90;
+                }
+            }
+        });
+        pitchDownBtn.addEventListener('mouseup', () => pitchDownHeld = false);
+        pitchDownBtn.addEventListener('mouseleave', () => pitchDownHeld = false);
+    }
+    
+    // Update manual pitch in game loop (called from main.js)
+    // Uses original dt (before time warp) to keep turning speed consistent regardless of time warp
+    window.updateManualPitch = function(dt) {
+        if (state.gameMode === 'manual' && state.running && state.manualPitch !== null) {
+            // Cap dt to prevent large jumps when frame rate is low
+            const cappedDt = Math.min(dt, 0.1);
+            const pitchRate = GUIDANCE_CONFIG.maxPitchRate;
+            if (pitchUpHeld) {
+                state.manualPitch = Math.min(90, state.manualPitch + pitchRate * cappedDt);
+            }
+            if (pitchDownHeld) {
+                state.manualPitch = Math.max(-5, state.manualPitch - pitchRate * cappedDt);
+            }
+        }
+    };
 }
 
 

@@ -50,9 +50,37 @@ export function updateTelemetry() {
     
     const pitch = getPitch(state.time);
     document.getElementById('pitch').textContent = pitch.toFixed(1) + '°';
-    document.getElementById('target-pitch').textContent = pitch.toFixed(1) + '°';
-    document.getElementById('current-pitch').textContent = pitch.toFixed(1) + '°';
-    document.getElementById('pitch-bar').style.width = (pitch / 90 * 100) + '%';
+    
+    // Update pitch display based on mode
+    if (state.gameMode === 'manual') {
+        // Show manual pitch and guidance recommendation
+        const manualPitchDisplay = document.getElementById('manual-pitch-display');
+        const guidanceRec = document.getElementById('guidance-recommendation');
+        const guidanceRecValue = document.getElementById('guidance-rec-value');
+        
+        if (manualPitchDisplay) {
+            manualPitchDisplay.textContent = (state.manualPitch !== null ? state.manualPitch : pitch).toFixed(1) + '°';
+        }
+        
+        if (guidanceRec && guidanceRecValue && state.guidanceRecommendation !== null) {
+            guidanceRecValue.textContent = state.guidanceRecommendation.toFixed(1) + '°';
+            guidanceRec.style.display = 'block';
+        } else if (guidanceRec) {
+            guidanceRec.style.display = 'none';
+        }
+        
+        // Hide normal pitch program display
+        const pitchProgram = document.getElementById('pitch-program');
+        if (pitchProgram) pitchProgram.style.display = 'none';
+    } else {
+        // Show normal pitch program
+        document.getElementById('target-pitch').textContent = pitch.toFixed(1) + '°';
+        document.getElementById('current-pitch').textContent = pitch.toFixed(1) + '°';
+        document.getElementById('pitch-bar').style.width = (pitch / 90 * 100) + '%';
+        
+        const pitchProgram = document.getElementById('pitch-program');
+        if (pitchProgram) pitchProgram.style.display = 'block';
+    }
     
     document.getElementById('apoapsis').textContent = state.apoapsis === Infinity ? 'ESCAPE' : (state.apoapsis / 1000).toFixed(1) + ' km';
     document.getElementById('periapsis').textContent = (state.periapsis / 1000).toFixed(1) + ' km';
@@ -71,18 +99,37 @@ export function updateTelemetry() {
     }
     
     // Show/hide burn controls when in orbit and pitch program is complete
-    const pitchProgramComplete = state.time > 600 || (!state.engineOn && altitude > 150000);
+    // In orbital mode, always show burn controls if we have propellant
+    const pitchProgramComplete = state.gameMode === 'orbital' || state.time > 600 || (!state.engineOn && altitude > 150000);
     const inOrbit = altitude > 150000 && state.currentStage < ROCKET_CONFIG.stages.length && pitchProgramComplete;
     const burnControls = document.getElementById('burn-controls');
-    if (inOrbit) {
-        burnControls.style.display = 'block';
+    
+    // Show burn controls in orbital mode (if we have propellant) or when in orbit
+    if (state.gameMode === 'orbital') {
+        // In orbital mode, show controls if we have a stage with propellant
+        if (burnControls && state.currentStage < ROCKET_CONFIG.stages.length) {
+            burnControls.style.display = 'block';
+        } else if (burnControls) {
+            burnControls.style.display = 'none';
+        }
+    } else if (inOrbit) {
+        if (burnControls) burnControls.style.display = 'block';
     } else {
-        burnControls.style.display = 'none';
+        if (burnControls) burnControls.style.display = 'none';
         // Clear burn mode if not in orbit or pitch program still running
         if (state.burnMode) {
             state.burnMode = null;
             state.burnStartTime = null;
         }
+    }
+    
+    // Show mode indicator in telemetry
+    const modeLabel = document.querySelector('#telemetry .section:first-child .label');
+    if (modeLabel && state.gameMode) {
+        const modeText = state.gameMode === 'manual' ? 'Manual' : 
+                        state.gameMode === 'guided' ? 'Guided' : 
+                        state.gameMode === 'orbital' ? 'Orbital' : '';
+        // Could add mode display here if needed
     }
     
     // Update active burn button and burn status

@@ -515,12 +515,17 @@ export function calculateBurnEvents() {
 
 // Get next upcoming event
 export function getNextEvent() {
+    // Skip event calculation in orbital mode (already in orbit, no launch events)
+    if (state.gameMode === 'orbital') {
+        return null;
+    }
+    
     const altitude = getAltitude();
     const velocity = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
     const events = [];
     
-    // Pitch program start (first pitch change at 10s)
-    if (state.time < 10) {
+    // Pitch program start (first pitch change at 10s) - only for launch modes
+    if (state.time < 10 && (state.gameMode === 'manual' || state.gameMode === 'guided')) {
         events.push({ time: 10 - state.time, name: 'Pitch program start' });
     }
     

@@ -62,6 +62,7 @@
     </div>
     
     <div id="controls">
+        <button id="menu-btn">MENU</button>
         <button id="launch-btn">LAUNCH</button>
         <button id="pause-btn" style="display: none;">PAUSE</button>
         <button id="reset-btn">RESET</button>
@@ -70,6 +71,59 @@
         <button id="zoom-in-btn">ZOOM IN</button>
         <button id="zoom-auto-btn">AUTO ZOOM</button>
         <button id="camera-btn">FOLLOW ROCKET</button>
+    </div>
+    
+    <div id="menu-panel" style="display: none;">
+        <div class="menu-header">
+            <h2>Mission Selector</h2>
+            <button id="menu-close-btn" class="menu-close">×</button>
+        </div>
+        <div id="current-mode-display" class="current-mode">No mission selected</div>
+        
+        <div class="menu-section">
+            <h3>Manual Control</h3>
+            <p class="menu-description">Control pitch manually (W/S keys). Guidance provides recommendations.</p>
+            <button id="start-manual-btn" class="menu-start-btn">START MANUAL CONTROL</button>
+        </div>
+        
+        <div class="menu-section">
+            <h3>Guided Launch</h3>
+            <p class="menu-description">Set target altitude and let the guidance system handle the launch.</p>
+            <div class="menu-input-group">
+                <label for="target-altitude-input">Target Altitude (km):</label>
+                <input type="number" id="target-altitude-input" value="500" min="150" max="2000" step="50">
+            </div>
+            <button id="start-guided-btn" class="menu-start-btn">START GUIDED LAUNCH</button>
+        </div>
+        
+        <div class="menu-section">
+            <h3>Orbital Mode</h3>
+            <p class="menu-description">Spawn in orbit and practice orbital mechanics.</p>
+            <div class="menu-preset-buttons">
+                <button class="preset-btn" data-altitude="200">200 km</button>
+                <button class="preset-btn" data-altitude="400">400 km</button>
+                <button class="preset-btn active" data-altitude="500">500 km</button>
+                <button class="preset-btn" data-altitude="600">600 km</button>
+                <button class="preset-btn" data-altitude="800">800 km</button>
+            </div>
+            <button id="start-orbital-btn" class="menu-start-btn">SPAWN IN ORBIT</button>
+        </div>
+    </div>
+    
+    <div id="menu-overlay" style="display: none;"></div>
+    
+    <div id="manual-pitch-controls" style="display: none;">
+        <h3>MANUAL PITCH CONTROL</h3>
+        <div class="pitch-display">
+            <div id="manual-pitch-display">90°</div>
+            <div id="guidance-recommendation" class="guidance-recommendation" style="display: none;">
+                Guidance: <span id="guidance-rec-value">90°</span>
+            </div>
+        </div>
+        <div class="pitch-buttons">
+            <button id="pitch-up-btn">↑ PITCH UP<br>(W Key)</button>
+            <button id="pitch-down-btn">↓ PITCH DOWN<br>(S Key)</button>
+        </div>
     </div>
     
     <div id="burn-controls" style="display: none;">
