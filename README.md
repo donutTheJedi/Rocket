@@ -2,6 +2,8 @@
 
 A realistic 2D physics simulation of orbital mechanics and rocket launches from Earth. Experience the challenge of launching a Falcon 9-like rocket into orbit with accurate physics, atmospheric modeling, and an intelligent closed-loop guidance system.
 
+**🌐 Live Demo: [https://www.donutthejedi.com/](https://www.donutthejedi.com/)**
+
 ![Rocket Simulation](https://img.shields.io/badge/Status-Active-success)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
