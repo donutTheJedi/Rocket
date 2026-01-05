@@ -88,6 +88,105 @@ export function render() {
     ctx.lineWidth = metersPerPixel * 2;
     ctx.stroke();
     
+    // City visualization - fades as altitude increases
+    // City fades from fully visible at ground level to invisible at 100km
+    const fadeStartAlt = 0;
+    const fadeEndAlt = 100000; // 100km
+    const cityOpacity = Math.max(0, 1 - (altitude - fadeStartAlt) / (fadeEndAlt - fadeStartAlt));
+    
+    if (cityOpacity > 0 && metersPerPixel < 100) {
+        // Launch site is at (0, EARTH_RADIUS)
+        // Keep rocket area clear (about 800m clear zone)
+        const rocketClearZone = 3400; // meters
+        const cityStartX = rocketClearZone + 1000; // Start city 1km to the right of clear zone
+        const cityEndX = cityStartX + 50000; // 9km of city to the right
+        const cityY = EARTH_RADIUS;
+        
+        ctx.save();
+        ctx.globalAlpha = cityOpacity;
+        
+        // Generate dense cityscape - lots of buildings spanning 9km
+        const buildings = [];
+        let currentX = cityStartX;
+        
+        // Generate buildings in rows (multiple rows for density)
+        while (currentX < cityEndX) {
+            // Determine building size (varied for realism)
+            const randSeed = currentX * 0.0001; // Use position as seed for deterministic randomness
+            const hash = Math.floor(Math.abs(Math.sin(randSeed)) * 1000000) % 1000;
+            
+            // Building width: 40-100m (most buildings 50-80m)
+            const widthOptions = [45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95];
+            const width = widthOptions[hash % widthOptions.length];
+            
+            // Building height: varies by area (downtown taller, suburbs shorter)
+            const distanceFromStart = currentX - cityStartX;
+            const cityProgress = distanceFromStart / 9000; // 0 to 1
+            
+            let height;
+            if (cityProgress < 0.2) {
+                // Closer to rocket: shorter buildings (suburbs)
+                height = 100 + (hash % 100);
+            } else if (cityProgress < 0.6) {
+                // Middle: medium buildings (urban)
+                height = 150 + (hash % 150);
+            } else {
+                // Far end: tall buildings (downtown)
+                height = 200 + (hash % 200);
+            }
+            
+            buildings.push({
+                x: currentX,
+                width: width,
+                height: height,
+                hash: hash
+            });
+            
+            // Spacing: buildings are close together (city density)
+            // Some small gaps, but mostly touching
+            const spacing = width + (hash % 20); // 0-19m spacing
+            currentX += spacing;
+        }
+        
+        // Draw all buildings
+        for (let i = 0; i < buildings.length; i++) {
+            const b = buildings[i];
+            const x = b.x;
+            const y = cityY;
+            
+            // Building base (on Earth surface) - varied colors for depth
+            const hue = (b.hash * 17) % 360;
+            const brightness = 25 + (b.hash % 4) * 12;
+            ctx.fillStyle = `hsl(${hue}, 25%, ${brightness}%)`;
+            ctx.fillRect(x - b.width/2, y, b.width, b.height);
+            
+            // Building outline for definition
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = Math.max(metersPerPixel * 0.3, 0.5);
+            ctx.strokeRect(x - b.width/2, y, b.width, b.height);
+            
+            // Building windows (deterministic pattern)
+            ctx.fillStyle = '#ffaa00';
+            const windowRows = Math.floor(b.height / 30);
+            const windowsPerRow = Math.floor(b.width / 20);
+            for (let row = 0; row < windowRows; row++) {
+                for (let col = 0; col < windowsPerRow; col++) {
+                    // Deterministic pattern: light windows based on position hash
+                    const windowHash = (b.hash * 31 + row * 17 + col * 13) % 100;
+                    if (windowHash > 35) { // ~65% of windows lit
+                        ctx.fillRect(
+                            x - b.width/2 + 5 + col * 20,
+                            y + 5 + row * 30,
+                            8, 15
+                        );
+                    }
+                }
+            }
+        }
+        
+        ctx.restore();
+    }
+    
     // Ground detail when close
     if (metersPerPixel < 20) {
         ctx.fillStyle = '#555';

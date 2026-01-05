@@ -91,7 +91,7 @@ export const GUIDANCE_CONFIG = {
     
     // Initial ascent
     initialPitch: 85,                // degrees — slight eastward tilt from start
-    pitchKickStart: 3,               // seconds — when to start pitching from vertical
+    pitchKickStart: 10,               // seconds — when to start pitching from vertical
     pitchKickEnd: 15,                // seconds — when to reach initialPitch
 };
 
