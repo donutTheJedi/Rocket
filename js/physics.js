@@ -303,7 +303,92 @@ export function getAirspeed() {
 }
 
 /**
- * Get drag force using US Standard Atmosphere 1976
+ * ============================================================================
+ * MACH-DEPENDENT DRAG COEFFICIENT MODEL
+ * ============================================================================
+ * 
+ * Based on Saturn V wind tunnel data (NASA TM X-53770) scaled for slender
+ * launch vehicles using fineness ratio (length/diameter).
+ * 
+ * Key phenomena modeled:
+ * - Subsonic: Skin friction dominates, Cd relatively constant
+ * - Transonic (M 0.8-1.2): Sharp drag rise due to shock wave formation
+ * - Supersonic: Gradual decrease as shocks stabilize
+ * - Hypersonic: Asymptotic approach to minimum
+ * 
+ * REFERENCES:
+ * [1] NASA TM X-53770, "Results of several experimental investigations of the
+ *     static aerodynamic characteristics for the Apollo/Saturn V launch vehicle"
+ *     Walker, C.E., Marshall Space Flight Center, 1968
+ * [2] Braeunig, R.A., "Basics of Space Flight: Aerodynamics"
+ *     http://braeunig.us/space/aerodyn_wip.htm
+ * [3] "Drag Coefficient Prediction, Chapter 1" (DATCOM-derived methods)
+ *     http://www.braeunig.us/space/pdf/Drag_Coefficient_Prediction.pdf
+ * 
+ * @param {number} mach - Mach number
+ * @returns {number} Drag coefficient (referenced to cross-sectional area)
+ */
+export function getMachDragCoefficient(mach) {
+    // Fineness ratio from rocket config
+    const finenessRatio = ROCKET_CONFIG.totalLength / ROCKET_CONFIG.stages[0].diameter;
+    
+    // Fineness ratio adjustment factor
+    // Higher L/D = lower drag coefficient (more streamlined)
+    // Reference: L/D = 11 (Saturn V), baseline Cd values
+    // Adjustment scales linearly with inverse fineness ratio
+    const finenessAdjustment = Math.min(1.0, 11 / finenessRatio);
+    
+    let baseCd;
+    
+    if (mach < 0.6) {
+        // Low subsonic: constant, skin friction dominated
+        baseCd = 0.30;
+    }
+    else if (mach < 0.8) {
+        // Subsonic approaching transonic: slight increase begins
+        const t = (mach - 0.6) / 0.2;
+        baseCd = 0.30 + t * 0.02;
+    }
+    else if (mach < 1.0) {
+        // Transonic drag rise: rapid increase due to shock formation
+        // Smooth cubic interpolation for realistic transition
+        const t = (mach - 0.8) / 0.2;
+        const smoothT = t * t * (3 - 2 * t);  // Smoothstep
+        baseCd = 0.32 + smoothT * 0.18;  // Rise from 0.32 to 0.50
+    }
+    else if (mach < 1.2) {
+        // Transonic peak region: maximum drag around M = 1.05
+        if (mach < 1.05) {
+            baseCd = 0.50 + (mach - 1.0) * 0.4;  // Slight rise to peak ~0.52
+        } else {
+            baseCd = 0.52 - (mach - 1.05) * 0.4;  // Decrease from peak
+        }
+    }
+    else if (mach < 2.0) {
+        // Supersonic: gradual decrease as shocks become more oblique
+        const t = (mach - 1.2) / 0.8;
+        baseCd = 0.46 - t * 0.10;  // Decrease from 0.46 to 0.36
+    }
+    else if (mach < 3.0) {
+        // High supersonic: continued decrease
+        const t = (mach - 2.0) / 1.0;
+        baseCd = 0.36 - t * 0.06;  // Decrease from 0.36 to 0.30
+    }
+    else if (mach < 5.0) {
+        // Approaching hypersonic: slow decrease
+        const t = (mach - 3.0) / 2.0;
+        baseCd = 0.30 - t * 0.05;  // Decrease from 0.30 to 0.25
+    }
+    else {
+        // Hypersonic: asymptotic minimum
+        baseCd = 0.22 + 0.03 * Math.exp(-(mach - 5.0) / 3.0);
+    }
+    
+    return baseCd * finenessAdjustment;
+}
+
+/**
+ * Get drag force using US Standard Atmosphere 1976 with Mach-dependent Cd
  * @param {number} altitude - Geometric altitude (m)
  * @param {number} airspeed - Airspeed (m/s)
  * @param {Object} stage - Optional rocket stage configuration (if not provided, uses current stage from state)
@@ -316,9 +401,54 @@ export function getDrag(altitude, airspeed, stage = null) {
         stage = ROCKET_CONFIG.stages[state.currentStage];
     }
     
-    const density = getAtmosphericDensity(altitude);
+    const atm = getAtmosphericProperties(altitude);
+    const density = atm.density;
+    const speedOfSound = atm.speedOfSound;
     const area = Math.PI * (stage.diameter / 2) ** 2;
     
-    return 0.5 * density * airspeed * airspeed * stage.dragCoeff * area;
+    // Calculate Mach number
+    const mach = airspeed / speedOfSound;
+    
+    // Get Mach-dependent drag coefficient
+    const Cd = getMachDragCoefficient(mach);
+    
+    return 0.5 * density * airspeed * airspeed * Cd * area;
+}
+
+/**
+ * Get current drag coefficient (for telemetry display)
+ * @param {number} altitude - Geometric altitude (m)
+ * @param {number} airspeed - Airspeed (m/s)
+ * @returns {Object} { cd, mach } - Current drag coefficient and Mach number
+ */
+export function getCurrentDragCoefficient(altitude, airspeed) {
+    // Safety check for valid inputs
+    if (!isFinite(altitude) || altitude < 0) {
+        return { cd: 0, mach: 0 };
+    }
+    
+    // Allow airspeed to be 0 (rocket on ground before launch)
+    if (!isFinite(airspeed)) {
+        return { cd: 0, mach: 0 };
+    }
+    
+    const atm = getAtmosphericProperties(altitude);
+    
+    // Safety check for speed of sound
+    if (!isFinite(atm.speedOfSound) || atm.speedOfSound <= 0) {
+        return { cd: 0, mach: 0 };
+    }
+    
+    // Calculate Mach number (can be 0 if airspeed is 0)
+    const mach = airspeed / atm.speedOfSound;
+    
+    // Get drag coefficient (works even for Mach 0)
+    const cd = getMachDragCoefficient(mach);
+    
+    // Ensure we return valid numbers
+    return { 
+        cd: isFinite(cd) && cd >= 0 ? cd : 0, 
+        mach: isFinite(mach) && mach >= 0 ? mach : 0 
+    };
 }
 

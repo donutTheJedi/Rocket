@@ -1,13 +1,13 @@
 # 🚀 Orbital Rocket Simulation
 
 **Current Version:** [View Current Version](https://github.com/donutTheJedi/Rocket)  
-**Version for Portfolio:** [View Portfolio Version](https://github.com/donutTheJedi/Rocket/tree/0e043fd6ae89f26681f5d3c4ad71d70b87517799)
+**Version for Portfolio(Commits up to Jan 5th):** [View Portfolio Version](https://github.com/donutTheJedi/Rocket/tree/0e043fd6ae89f26681f5d3c4ad71d70b87517799)
 
 A realistic 2D physics simulation of orbital mechanics and rocket launches from Earth. Experience the challenge of launching a Falcon 9-like rocket into orbit with accurate physics, atmospheric modeling, and an intelligent closed-loop guidance system.
 
 **🌐 Live Demo:**  
 **Current Live Demo:** [https://www.donutthejedi.com/](https://www.donutthejedi.com/)  
-**Live Demo (Portfolio Version):** [https://www.donutthejedi.com/Portfolio](https://www.donutthejedi.com/Portfolio)
+**Live Demo (Portfolio Version Jan 5th):** [https://www.donutthejedi.com/Portfolio](https://www.donutthejedi.com/Portfolio)
 
 ![Rocket Simulation](https://img.shields.io/badge/Status-Active-success)
 ![License](https://img.shields.io/badge/License-MIT-blue)
@@ -21,6 +21,7 @@ A realistic 2D physics simulation of orbital mechanics and rocket launches from 
 - [Technical Details](#-technical-details)
 - [Guidance System](#-guidance-system)
 - [Project Structure](#-project-structure)
+- [Roadmap](#-roadmap)
 - [Contributing](#-contributing)
 
 ## ✨ Features
@@ -30,6 +31,7 @@ A realistic 2D physics simulation of orbital mechanics and rocket launches from 
 - **US Standard Atmosphere 1976**: Piecewise atmospheric model with geopotential altitude corrections
 - **Variable Thrust**: Sea-level to vacuum thrust and ISP variation
 - **Atmospheric Drag**: Velocity-relative drag calculations accounting for Earth's rotation
+- **Mach-Dependent Drag Coefficient**: Realistic transonic drag modeling with drag coefficient variation from subsonic through hypersonic regimes
 - **Symplectic Euler Integration**: Energy-conserving numerical integration for stable orbits
 - **Adaptive Sub-stepping**: Variable timestep for accuracy in different flight phases
 
@@ -45,7 +47,7 @@ A realistic 2D physics simulation of orbital mechanics and rocket launches from 
 - **Multiple Strategies**: Direct ascent and traditional circularization approaches
 
 ### User Interface
-- **Real-Time Telemetry**: Altitude, velocity, orbital parameters, and more
+- **Real-Time Telemetry**: Altitude, velocity, orbital parameters, Mach number, drag coefficient, and more
 - **Mission Events**: Timeline of important mission milestones
 - **Orbital Visualization**: Real-time orbit prediction and visualization
 - **Time Warp**: Speed up simulation up to 1000x
@@ -160,6 +162,7 @@ Spawn directly in orbit to practice orbital mechanics without going through laun
 - **Variable ISP**: Specific impulse varies with atmospheric pressure
 - **Mass Flow Rate**: Tsiolkovsky rocket equation
 - **Drag Model**: Velocity-relative drag with rotating atmosphere
+- **Mach-Dependent Drag Coefficient**: Realistic Cd(Mach) curves based on Saturn V wind tunnel data, modeling subsonic, transonic drag rise, supersonic, and hypersonic regimes
 
 ### Rocket Configuration
 
@@ -319,10 +322,68 @@ This simulation is excellent for:
 - **Atmospheric Physics**: Explore how atmosphere affects flight
 - **Mission Planning**: Practice orbital maneuvers and burns
 
+## 🎯 Roadmap
+
+### Guidance System
+
+#### Powered Explicit Guidance (PEG)
+Replace the current priority-based guidance with the iterative PEG algorithm used by Space Shuttle and Falcon 9. PEG computes optimal steering commands by solving for the thrust direction that achieves target orbital conditions while minimizing propellant usage.
+
+- [ ] Implement PEG state estimator (current position, velocity, mass)
+- [ ] Add iterative guidance loop with convergence criteria
+- [ ] Compute time-to-go and required velocity-to-be-gained (Vgo)
+- [ ] Generate pitch/yaw steering commands from PEG output
+- [ ] Handle guidance mode transitions (atmospheric → PEG handoff)
+- [ ] Add PEG telemetry display (Vgo, time-to-cutoff, steering angles)
+
+### Physics Fidelity
+
+#### Mach-Dependent Drag Coefficient ✅
+Implement realistic transonic drag modeling. Real rockets experience significant drag coefficient variation, particularly the transonic drag rise around Mach 0.8–1.2.
+
+- [x] Research Cd(Mach) curves for slender bodies (NASA technical reports)
+- [x] Implement piecewise or polynomial Cd interpolation
+- [x] Add subsonic regime (M < 0.8): ~0.25–0.30
+- [x] Add transonic drag rise (M 0.8–1.2): peak ~0.45–0.50
+- [x] Add supersonic regime (M > 1.2): gradual decrease ~0.35
+- [x] Add hypersonic regime (M > 5): stabilized ~0.20
+- [x] Display current Cd and Mach number in telemetry
+
+#### Engine Gimbal Dynamics
+Model realistic thrust vector control (TVC) with physical gimbal constraints instead of instantaneous thrust direction changes.
+
+- [ ] Add gimbal angle state (current deflection from centerline)
+- [ ] Implement gimbal rate limits (~5°/s typical for Merlin)
+- [ ] Add maximum gimbal deflection constraint (~5° for Merlin)
+- [ ] Model gimbal response lag (first-order filter)
+- [ ] Update guidance to account for gimbal authority limits
+- [ ] Visualize gimbal angle on rocket rendering
+- [ ] Add gimbal telemetry (commanded vs actual deflection)
+
+### User Experience
+
+#### Telemetry Graphs & Post-Flight Review
+Add real-time plotting during flight and comprehensive post-flight analysis.
+
+**Real-Time Graphs**
+- [ ] Altitude vs time
+- [ ] Velocity vs time (surface velocity + orbital velocity)
+- [ ] Acceleration vs time (with Max-Q marker)
+- [ ] Dynamic pressure vs time
+- [ ] Flight path angle vs time
+- [ ] Apoapsis/Periapsis evolution
+
+**Post-Flight Review**
+- [ ] Mission summary statistics (max altitude, max velocity, max Q, flight time)
+- [ ] Delta-V breakdown by phase (gravity losses, drag losses, steering losses)
+- [ ] Guidance performance analysis (actual vs commanded pitch)
+- [ ] Propellant usage timeline
+- [ ] Export flight data to CSV/JSON
+- [ ] Replay flight with adjustable playback speed
+
 ## 🐛 Known Limitations
 
 - **2D Only**: Simplified to 2D plane (no inclination changes)
-- **Constant Drag Coefficient**: Real rockets have Mach-dependent drag
 - **No Wind/Weather**: Atmospheric conditions are standard only
 - **Instant Stage Separation**: Real separations have dynamics
 - **No Structural Failure**: Max-Q protection exists but no failure modeling
@@ -331,7 +392,6 @@ This simulation is excellent for:
 
 Contributions are welcome! Areas for improvement:
 - 3D orbital mechanics
-- More realistic drag models
 - Additional rocket configurations
 - Mission scenarios
 - UI/UX improvements

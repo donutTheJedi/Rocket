@@ -1,6 +1,6 @@
-import { EARTH_RADIUS, ROCKET_CONFIG } from './constants.js';
+import { EARTH_RADIUS, ROCKET_CONFIG, KARMAN_LINE } from './constants.js';
 import { state, getAltitude, getTotalMass, getPitch } from './state.js';
-import { getAtmosphericDensity, getCurrentThrust, getAirspeed } from './physics.js';
+import { getAtmosphericDensity, getCurrentThrust, getAirspeed, getCurrentDragCoefficient } from './physics.js';
 import { formatTime, formatTMinus, getNextEvent } from './events.js';
 
 // Update all telemetry displays
@@ -38,8 +38,42 @@ export function updateTelemetry() {
     const mass = getTotalMass();
     document.getElementById('accel').textContent = (thrust / mass / 9.81).toFixed(2) + ' G';
     document.getElementById('maxq').textContent = (state.maxQ / 1000).toFixed(2) + ' kPa';
-    const { airspeed: airspeedForDisplay } = getAirspeed();
-    document.getElementById('dynpress').textContent = (0.5 * getAtmosphericDensity(altitude) * airspeedForDisplay * airspeedForDisplay / 1000).toFixed(2) + ' kPa';
+    
+    // Get telemetry elements for atmospheric properties
+    const dynpressEl = document.getElementById('dynpress');
+    const dragCoeffEl = document.getElementById('dragcoeff');
+    const machEl = document.getElementById('mach');
+    
+    if (altitude < KARMAN_LINE) {
+        // In atmosphere - calculate and display values
+        const { airspeed: airspeedForDisplay } = getAirspeed();
+        if (dynpressEl) {
+            dynpressEl.textContent = (0.5 * getAtmosphericDensity(altitude) * airspeedForDisplay * airspeedForDisplay / 1000).toFixed(2) + ' kPa';
+            dynpressEl.parentElement.style.display = '';
+        }
+        
+        // Calculate drag coefficient and Mach number
+        const airspeedAbs = Math.abs(airspeedForDisplay || 0);
+        const { cd, mach } = getCurrentDragCoefficient(altitude, airspeedAbs);
+        
+        // Ensure we have valid numbers before displaying
+        const displayCd = (isFinite(cd) && cd >= 0) ? cd : 0;
+        const displayMach = (isFinite(mach) && mach >= 0) ? mach : 0;
+        
+        if (dragCoeffEl) {
+            dragCoeffEl.textContent = displayCd.toFixed(3);
+            dragCoeffEl.parentElement.style.display = '';
+        }
+        if (machEl) {
+            machEl.textContent = displayMach.toFixed(2);
+            machEl.parentElement.style.display = '';
+        }
+    } else {
+        // In space - hide atmospheric telemetry
+        if (dynpressEl) dynpressEl.parentElement.style.display = 'none';
+        if (dragCoeffEl) dragCoeffEl.parentElement.style.display = 'none';
+        if (machEl) machEl.parentElement.style.display = 'none';
+    }
     document.getElementById('mass').textContent = mass.toFixed(0) + ' kg';
     
     const stage = ROCKET_CONFIG.stages[state.currentStage];
