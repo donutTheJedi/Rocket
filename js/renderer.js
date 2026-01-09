@@ -75,6 +75,11 @@ export function render() {
         ctx.translate(-state.x, -state.y);
     }
     
+    // Rotate Earth so launch site stays under rocket
+    const earthRotation = Math.atan2(state.x, state.y);
+    ctx.save();
+    ctx.rotate(-earthRotation);
+    
     // Earth
     ctx.beginPath();
     ctx.arc(0, 0, EARTH_RADIUS, 0, Math.PI * 2);
@@ -217,17 +222,28 @@ export function render() {
         ctx.setLineDash([]);
     }
     
-    // Trail
+    // Trail (transform each point to rotating frame so it follows behind rocket)
     if (state.trail.length > 1) {
+        const cosR = Math.cos(earthRotation);
+        const sinR = Math.sin(earthRotation);
+        
         ctx.beginPath();
-        ctx.moveTo(state.trail[0].x, state.trail[0].y);
+        // Transform first point from inertial to rotating frame
+        const x0 = state.trail[0].x * cosR - state.trail[0].y * sinR;
+        const y0 = state.trail[0].x * sinR + state.trail[0].y * cosR;
+        ctx.moveTo(x0, y0);
+        
         for (let i = 1; i < state.trail.length; i++) {
-            ctx.lineTo(state.trail[i].x, state.trail[i].y);
+            const x = state.trail[i].x * cosR - state.trail[i].y * sinR;
+            const y = state.trail[i].x * sinR + state.trail[i].y * cosR;
+            ctx.lineTo(x, y);
         }
         ctx.strokeStyle = 'rgba(255, 120, 0, 0.8)';
         ctx.lineWidth = Math.max(metersPerPixel * 2, 2);
         ctx.stroke();
     }
+    
+    ctx.restore(); // End Earth rotation
     
     // Rocket - ACTUAL SIZE 70m x 3.7m
     const rocketLen = 70;
